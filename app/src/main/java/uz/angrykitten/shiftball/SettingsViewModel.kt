@@ -29,47 +29,37 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _bestScore = MutableStateFlow(0)
     val bestScore: StateFlow<Int> = _bestScore
 
+    private val _theme = MutableStateFlow(AppTheme.VOID)
+    val theme: StateFlow<AppTheme> = _theme
+
     val ballColor: Color get() = BallColorOptions[_ballColorIdx.value].first
 
     init {
-        viewModelScope.launch {
-            ds.soundEffects.collect { _soundEffects.value = it }
-        }
-        viewModelScope.launch {
-            ds.music.collect { _music.value = it }
-        }
-        viewModelScope.launch {
-            ds.vibration.collect { _vibration.value = it }
-        }
-        viewModelScope.launch {
-            ds.ballColorIdx.collect { _ballColorIdx.value = it }
-        }
+        viewModelScope.launch { ds.soundEffects.collect { _soundEffects.value = it } }
+        viewModelScope.launch { ds.music.collect        { _music.value        = it } }
+        viewModelScope.launch { ds.vibration.collect    { _vibration.value    = it } }
+        viewModelScope.launch { ds.ballColorIdx.collect { _ballColorIdx.value = it } }
         viewModelScope.launch {
             ds.difficulty.collect { name ->
                 _difficulty.value = Difficulty.entries.find { it.name == name } ?: Difficulty.NORMAL
             }
         }
+        viewModelScope.launch { ds.bestScore.collect { _bestScore.value = it } }
         viewModelScope.launch {
-            ds.bestScore.collect { _bestScore.value = it }
+            ds.appTheme.collect { name ->
+                _theme.value = AppTheme.entries.find { it.name == name } ?: AppTheme.VOID
+            }
         }
     }
 
-    fun toggleSoundEffects() {
-        val v = !_soundEffects.value
-        _soundEffects.value = v
-        viewModelScope.launch { ds.saveSoundEffects(v) }
-    }
+    fun toggleSoundEffects() { toggle(_soundEffects) { ds.saveSoundEffects(it) } }
+    fun toggleMusic()         { toggle(_music)        { ds.saveMusic(it)        } }
+    fun toggleVibration()     { toggle(_vibration)    { ds.saveVibration(it)    } }
 
-    fun toggleMusic() {
-        val v = !_music.value
-        _music.value = v
-        viewModelScope.launch { ds.saveMusic(v) }
-    }
-
-    fun toggleVibration() {
-        val v = !_vibration.value
-        _vibration.value = v
-        viewModelScope.launch { ds.saveVibration(v) }
+    private fun toggle(state: MutableStateFlow<Boolean>, save: suspend (Boolean) -> Unit) {
+        val v = !state.value
+        state.value = v
+        viewModelScope.launch { save(v) }
     }
 
     fun setBallColorIdx(idx: Int) {
@@ -80,6 +70,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setDifficulty(diff: Difficulty) {
         _difficulty.value = diff
         viewModelScope.launch { ds.saveDifficulty(diff.name) }
+    }
+
+    fun setTheme(theme: AppTheme) {
+        _theme.value = theme
+        viewModelScope.launch { ds.saveAppTheme(theme.name) }
     }
 
     fun updateBestScore(score: Int) {

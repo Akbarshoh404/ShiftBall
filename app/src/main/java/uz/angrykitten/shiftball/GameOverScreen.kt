@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -24,148 +25,86 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
 
-// ─── Simple confetti data ────────────────────────────────────────────────────
 private data class Confetti(
-    val x: Float,
-    val y: Float,
+    val x: Float, val y: Float,
     val color: Color,
-    val angle: Float,
-    val speed: Float,
-    val size: Float,
-    val rotSpeed: Float
+    val angle: Float, val speed: Float,
+    val size: Float, val rotSpeed: Float
 )
 
 @Composable
 fun GameOverScreen(
-    score: Int,
-    gems: Int,
-    bestScore: Int,
-    isNewBest: Boolean,
-    onPlayAgain: () -> Unit,
-    onMenu: () -> Unit
+    score: Int, gems: Int, bestScore: Int, isNewBest: Boolean,
+    onPlayAgain: () -> Unit, onMenu: () -> Unit
 ) {
-    val stars = when {
-        score >= 60 -> 3
-        score >= 25 -> 2
-        score >= 8  -> 1
-        else        -> 0
-    }
+    val theme = LocalVoidFallTheme.current
 
-    // Entrance animation
+    val stars = when { score >= 60 -> 3; score >= 25 -> 2; score >= 8 -> 1; else -> 0 }
+
     var show by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { show = true }
 
-    val contentScale by animateFloatAsState(
-        targetValue   = if (show) 1f else 0.85f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-        label         = "content_scale"
-    )
-    val contentAlpha by animateFloatAsState(
-        targetValue   = if (show) 1f else 0f,
-        animationSpec = tween(450),
-        label         = "content_alpha"
-    )
+    val cScale by animateFloatAsState(if (show) 1f else 0.85f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow), label = "cscale")
+    val cAlpha by animateFloatAsState(if (show) 1f else 0f,    tween(450),                                                       label = "calpha")
 
-    val starBounce by rememberInfiniteTransition(label = "star_bounce").animateFloat(
-        initialValue  = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label         = "star_pulse"
-    )
-
-    // Confetti ticker (for new best)
-    val confettiTick by rememberInfiniteTransition(label = "confetti").animateFloat(
-        initialValue  = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
-        label         = "confetti_tick"
-    )
+    val starBounce by rememberInfiniteTransition(label = "sb").animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "sp")
+    val confettiTick by rememberInfiniteTransition(label = "ct").animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), label = "ctick")
 
     val confetti = remember {
-        if (isNewBest) List(48) {
-            Confetti(
-                x        = Random.nextFloat(),
-                y        = Random.nextFloat() * 0.6f - 0.1f,
-                color    = listOf(
-                    Color(0xFFFFD700), Color(0xFFFF6FD8), Color(0xFF00C6FF),
-                    Color(0xFFA0FF8C), Color(0xFFFF9A3C)
-                ).random(),
-                angle    = Random.nextFloat() * 2f * PI.toFloat(),
-                speed    = Random.nextFloat() * 0.18f + 0.06f,
-                size     = Random.nextFloat() * 5f + 3f,
-                rotSpeed = (Random.nextFloat() - 0.5f) * 4f
-            )
+        if (isNewBest) List(52) {
+            val colors = listOf(Color(0xFFFFD700), Color(0xFFFF6FD8), Color(0xFF00C6FF), Color(0xFFA0FF8C), Color(0xFFFF9A3C))
+            Confetti(Random.nextFloat(), Random.nextFloat() * 0.6f - 0.12f, colors.random(),
+                Random.nextFloat() * 2f * PI.toFloat(), Random.nextFloat() * 0.16f + 0.06f,
+                Random.nextFloat() * 5f + 3f, (Random.nextFloat() - 0.5f) * 4.5f)
         } else emptyList()
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ColorBackground),
-        contentAlignment = Alignment.Center
+        modifier           = Modifier.fillMaxSize().background(theme.background),
+        contentAlignment   = Alignment.Center
     ) {
-        // Background ambient glow
         Canvas(Modifier.fillMaxSize()) {
             drawCircle(
-                brush  = Brush.radialGradient(
-                    colors = listOf(ColorPlatformStart.copy(alpha = 0.07f), Color.Transparent),
-                    center = Offset(size.width / 2f, size.height * 0.4f),
-                    radius = size.width * 0.75f
-                ),
-                radius = size.width * 0.75f,
-                center = Offset(size.width / 2f, size.height * 0.4f)
+                brush  = Brush.radialGradient(listOf(theme.platformStart.copy(alpha = 0.06f), Color.Transparent), Offset(size.width / 2f, size.height * 0.38f), size.width * 0.75f),
+                radius = size.width * 0.75f, center = Offset(size.width / 2f, size.height * 0.38f)
             )
-
-            // Confetti
             if (isNewBest) {
                 confetti.forEachIndexed { i, c ->
-                    val animY  = (c.y + confettiTick * c.speed + i * 0.013f) % 1.15f
-                    val animX  = c.x + sin(confettiTick * 2f * PI.toFloat() + i) * 0.02f
-                    val rot    = confettiTick * c.rotSpeed * PI.toFloat()
-                    val cx     = animX * size.width
-                    val cy     = animY * size.height
-                    val s      = c.size
-
+                    val animY = (c.y + confettiTick * c.speed + i * 0.013f) % 1.15f
+                    val animX = c.x + sin(confettiTick * 2f * PI.toFloat() + i) * 0.018f
+                    val rot   = confettiTick * c.rotSpeed * PI.toFloat()
                     withTransform({
-                        translate(cx, cy)
+                        translate(animX * size.width, animY * size.height)
                         rotate(rot * 180f / PI.toFloat())
                     }) {
-                        drawRect(
-                            color   = c.color.copy(alpha = 0.75f),
-                            topLeft = Offset(-s / 2f, -s / 4f),
-                            size    = Size(s, s / 2f)
-                        )
+                        drawRect(c.color.copy(alpha = 0.78f), Offset(-c.size / 2f, -c.size / 4f), Size(c.size, c.size / 2f))
                     }
                 }
             }
         }
 
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val screenW = maxWidth
-            val scoreFs = (screenW.value * 0.18f).coerceIn(56f, 80f).sp
-            val labelFs = (screenW.value * 0.029f).coerceIn(10f, 13f).sp
-            val titleFs = (screenW.value * 0.075f).coerceIn(24f, 34f).sp
-            val hPad    = (screenW.value * 0.065f).coerceIn(18f, 32f).dp
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val sw      = maxWidth
+            val scoreFs = (sw.value * 0.175f).coerceIn(52f, 78f).sp
+            val labelFs = (sw.value * 0.028f).coerceIn(9f, 13f).sp
+            val titleFs = (sw.value * 0.072f).coerceIn(22f, 32f).sp
+            val hPad    = (sw.value * 0.065f).coerceIn(16f, 30f).dp
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = hPad)
-                    .graphicsLayer {
-                        scaleX = contentScale
-                        scaleY = contentScale
-                        alpha  = contentAlpha
-                    }
+                    .graphicsLayer { scaleX = cScale; scaleY = cScale; alpha = cAlpha }
                     .align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Title
                 Text(
                     text          = if (isNewBest) "NEW BEST!" else "ROUND OVER",
-                    color         = if (isNewBest) ColorGem else Color(0xFFF472B6),
+                    color         = if (isNewBest) theme.gem else theme.platformEnd,
                     fontSize      = titleFs,
                     fontFamily    = FontFamily.Default,
                     fontWeight    = FontWeight.Black,
@@ -178,168 +117,89 @@ fun GameOverScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(20.dp))
-                        .background(Color(0xFF160D24))
+                        .background(theme.surfaceCard)
                         .drawBehind {
-                            // Border
-                            val strokeW = 1f * density
-                            drawRoundRect(
-                                color        = Color(0x44FFFFFF),
-                                topLeft      = Offset(strokeW, strokeW),
-                                size         = Size(size.width - strokeW * 2, size.height - strokeW * 2),
-                                cornerRadius = CornerRadius(20.dp.toPx()),
-                                style        = androidx.compose.ui.graphics.drawscope.Stroke(strokeW)
-                            )
+                            val s = 1f * density
+                            drawRoundRect(theme.divider, Offset(s, s), size.copy(size.width - s * 2, size.height - s * 2), CornerRadius(20.dp.toPx()), Stroke(s))
                         }
-                        .padding(horizontal = 24.dp, vertical = 24.dp)
+                        .padding(horizontal = 22.dp, vertical = 22.dp)
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier            = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            text          = "YOUR SCORE",
-                            color         = Color(0xFFAFA7C1),
-                            fontSize      = labelFs,
-                            fontFamily    = FontFamily.Default,
-                            letterSpacing = 3.sp,
-                            fontWeight    = FontWeight.SemiBold
-                        )
-                        Text(
-                            text       = score.toString(),
-                            color      = Color.White,
-                            fontSize   = scoreFs,
-                            fontFamily = FontFamily.Default,
-                            fontWeight = FontWeight.Black
-                        )
+                        Text("YOUR SCORE", color = theme.accent, fontSize = labelFs, fontFamily = FontFamily.Default, letterSpacing = 3.sp, fontWeight = FontWeight.SemiBold)
+                        Text(score.toString(), color = theme.score, fontSize = scoreFs, fontFamily = FontFamily.Default, fontWeight = FontWeight.Black)
 
-                        // Best score row
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Text(
-                                "★",
-                                color    = ColorStar,
-                                fontSize = labelFs
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("★", color = theme.star, fontSize = labelFs)
                             Spacer(Modifier.width(4.dp))
-                            Text(
-                                text       = "Best: $bestScore",
-                                color      = ColorStar,
-                                fontSize   = labelFs,
-                                fontFamily = FontFamily.Default
-                            )
+                            Text("Best: $bestScore", color = theme.star, fontSize = labelFs, fontFamily = FontFamily.Default)
                         }
 
-                        // Divider
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(Color(0x28FFFFFF))
-                        )
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x22FFFFFF)))
 
-                        // Stars
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment     = Alignment.CenterVertically
-                        ) {
+                        // Stars row
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             repeat(3) { i ->
                                 val filled    = i < stars
-                                val starScale = if (filled) 1f + starBounce * 0.1f else 1f
+                                val starScale = if (filled) 1f + starBounce * 0.12f else 1f
                                 Text(
-                                    text     = "★",
-                                    color    = if (filled) ColorStar else ColorStarEmpty,
-                                    fontSize = (if (i == 1) 38 else 30).sp,
-                                    modifier = Modifier
-                                        .graphicsLayer { scaleX = starScale; scaleY = starScale }
-                                        .padding(horizontal = 6.dp)
+                                    "★",
+                                    color    = if (filled) theme.star else theme.starEmpty,
+                                    fontSize = (if (i == 1) 36 else 28).sp,
+                                    modifier = Modifier.graphicsLayer { scaleX = starScale; scaleY = starScale }.padding(horizontal = 5.dp)
                                 )
                             }
                         }
 
-                        // Gems
                         if (gems > 0) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("◆", color = ColorGem, fontSize = labelFs)
+                                Text("◆", color = theme.gem, fontSize = labelFs)
                                 Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text      = "$gems gems",
-                                    color     = Color(0xFFAFA7C1),
-                                    fontSize  = labelFs,
-                                    fontFamily = FontFamily.Default
-                                )
+                                Text("$gems gems", color = theme.accent, fontSize = labelFs, fontFamily = FontFamily.Default)
                             }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(4.dp))
-
-                // Action buttons
-                GameOverButton(
-                    text    = "▶  PLAY AGAIN",
-                    filled  = true,
-                    onClick = onPlayAgain
-                )
-                GameOverButton(
-                    text    = "MAIN MENU",
-                    filled  = false,
-                    onClick = onMenu
-                )
+                Spacer(Modifier.height(2.dp))
+                GameOverButton("PLAY AGAIN", filled = true,  theme = theme, onClick = onPlayAgain)
+                GameOverButton("MAIN MENU",  filled = false, theme = theme, onClick = onMenu)
             }
         }
     }
 }
 
 @Composable
-private fun GameOverButton(text: String, filled: Boolean, onClick: () -> Unit) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val fillBrush  = Brush.horizontalGradient(listOf(Color(0xFFB462FE), Color(0xFF7C3AED)))
-    val emptyBrush = Brush.horizontalGradient(listOf(Color(0x1AB462FE), Color(0x1A7C3AED)))
-
-    // Press animation
+private fun GameOverButton(text: String, filled: Boolean, theme: VoidFallTheme, onClick: () -> Unit) {
     var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue   = if (pressed) 0.97f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessHigh),
-        label         = "btn_scale"
-    )
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, spring(stiffness = Spring.StiffnessHigh), label = "btn_s")
+
+    val fillBrush  = Brush.horizontalGradient(listOf(theme.btnPrimary1, theme.btnPrimary2))
+    val emptyBrush = Brush.horizontalGradient(listOf(theme.btnPrimary1.copy(alpha = 0.1f), theme.btnPrimary2.copy(alpha = 0.1f)))
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .height(50.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(16.dp))
             .background(if (filled) fillBrush else emptyBrush)
             .drawBehind {
                 if (!filled) {
-                    val strokeW = 1.2f * density
-                    drawRoundRect(
-                        color        = Color(0xFFB462FE).copy(alpha = 0.5f),
-                        size         = size.copy(
-                            width  = size.width  - strokeW,
-                            height = size.height - strokeW
-                        ),
-                        topLeft      = Offset(strokeW / 2f, strokeW / 2f),
-                        cornerRadius = CornerRadius(16.dp.toPx()),
-                        style        = androidx.compose.ui.graphics.drawscope.Stroke(strokeW)
-                    )
+                    val sw = 1.2f * density
+                    drawRoundRect(theme.btnOutline.copy(alpha = 0.45f), Offset(sw, sw), size.copy(size.width - sw * 2, size.height - sw * 2), CornerRadius(16.dp.toPx()), Stroke(sw))
                 }
             }
-            .clickable(
-                interactionSource = interactionSource,
-                indication        = null,
-                onClick           = onClick
-            ),
+            .clickable(remember { MutableInteractionSource() }, null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text          = text,
-            color         = if (filled) Color.White else Color(0xFFE8D5FF),
-            fontSize      = 15.sp,
+            color         = if (filled) Color.White else theme.score.copy(alpha = 0.8f),
+            fontSize      = 14.sp,
             fontFamily    = FontFamily.Default,
             fontWeight    = FontWeight.Bold,
             letterSpacing = 2.sp

@@ -1,6 +1,7 @@
 package uz.angrykitten.shiftball
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -16,9 +17,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,33 +36,31 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit
 ) {
+    val theme        = LocalVoidFallTheme.current
     val soundEffects by viewModel.soundEffects.collectAsStateWithLifecycle()
     val music        by viewModel.music.collectAsStateWithLifecycle()
     val vibration    by viewModel.vibration.collectAsStateWithLifecycle()
     val ballColorIdx by viewModel.ballColorIdx.collectAsStateWithLifecycle()
     val difficulty   by viewModel.difficulty.collectAsStateWithLifecycle()
     val bestScore    by viewModel.bestScore.collectAsStateWithLifecycle()
+    val currentTheme by viewModel.theme.collectAsStateWithLifecycle()
 
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
-    val alpha by animateFloatAsState(
-        targetValue   = if (visible) 1f else 0f,
-        animationSpec = tween(380),
-        label         = "settings_alpha"
-    )
+    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(350), label = "sa")
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(ColorBackground)
+            .background(theme.background)
             .graphicsLayer { this.alpha = alpha }
     ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val screenW = maxWidth
-            val hPad    = (screenW.value * 0.06f).coerceIn(16f, 28f).dp
-            val labelFs = (screenW.value * 0.028f).coerceIn(9f, 12f).sp
-            val bodyFs  = (screenW.value * 0.038f).coerceIn(13f, 16f).sp
-            val headerFs = (screenW.value * 0.055f).coerceIn(18f, 23f).sp
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val sw      = maxWidth
+            val hPad    = responsiveDp(sw, 0.06f, 16f, 28f).dp
+            val labelFs = responsiveSp(sw, 0.027f, 9f, 12f)
+            val bodyFs  = responsiveSp(sw, 0.038f, 13f, 16f)
+            val headerFs = responsiveSp(sw, 0.052f, 17f, 22f)
 
             Column(
                 modifier = Modifier
@@ -62,31 +68,44 @@ fun SettingsScreen(
                     .systemBarsPadding()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = hPad, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Header
+                // ─ Header ────────────────────────────────────────────────────
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier          = Modifier.fillMaxWidth()
                 ) {
+                    // Back button — canvas-drawn arrow, perfectly centered
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF1E1040))
+                            .background(theme.surfaceCard)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = onBack
+                                indication        = null,
+                                onClick           = onBack
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("←", color = Color.White, fontSize = 18.sp)
+                        Canvas(modifier = Modifier.size(16.dp)) {
+                            val sw2   = 2f * density
+                            val midY  = size.height * 0.5f
+                            val tipX  = size.width * 0.12f
+                            val endX  = size.width * 0.88f
+                            val headH = size.height * 0.38f
+                            // Shaft
+                            drawLine(Color.White, Offset(tipX, midY), Offset(endX, midY), strokeWidth = sw2, cap = StrokeCap.Round)
+                            // Arrow head top
+                            drawLine(Color.White, Offset(tipX, midY), Offset(tipX + headH, midY - headH), strokeWidth = sw2, cap = StrokeCap.Round)
+                            // Arrow head bottom
+                            drawLine(Color.White, Offset(tipX, midY), Offset(tipX + headH, midY + headH), strokeWidth = sw2, cap = StrokeCap.Round)
+                        }
                     }
                     Spacer(Modifier.width(14.dp))
                     Text(
                         text          = "SETTINGS",
-                        color         = ColorScore,
+                        color         = theme.score,
                         fontSize      = headerFs,
                         fontFamily    = FontFamily.Default,
                         fontWeight    = FontWeight.Black,
@@ -94,84 +113,96 @@ fun SettingsScreen(
                     )
                 }
 
-                SectionLabel("AUDIO", labelFs)
-
-                SettingsToggleRow(
-                    label   = "Sound Effects",
-                    checked = soundEffects,
-                    onToggle = { viewModel.toggleSoundEffects() },
-                    bodyFs  = bodyFs
-                )
-                SettingsToggleRow(
-                    label   = "Music",
-                    checked = music,
-                    onToggle = { viewModel.toggleMusic() },
-                    bodyFs  = bodyFs
-                )
-                SettingsToggleRow(
-                    label   = "Vibration",
-                    checked = vibration,
-                    onToggle = { viewModel.toggleVibration() },
-                    bodyFs  = bodyFs
-                )
-
-                SectionLabel("BALL COLOR", labelFs)
-
+                // ─ Theme selector ─────────────────────────────────────────────
+                SettingSection("THEME", labelFs, theme)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier              = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    BallColorOptions.forEachIndexed { idx, (color, label) ->
-                        val selected = idx == ballColorIdx
-                        val scale by animateFloatAsState(
-                            targetValue   = if (selected) 1.14f else 1f,
-                            animationSpec = spring(Spring.DampingRatioMediumBouncy),
-                            label         = "color_scale_$idx"
-                        )
+                    AllThemes.forEach { t ->
+                        val selected = t.id == currentTheme
+                        val scale by animateFloatAsState(if (selected) 1.0f else 0.94f, spring(Spring.DampingRatioMediumBouncy), label = "tscale_${t.id}")
+
                         Column(
-                            modifier                 = Modifier.weight(1f),
-                            horizontalAlignment      = Alignment.CenterHorizontally,
-                            verticalArrangement      = Arrangement.spacedBy(6.dp)
+                            modifier            = Modifier.weight(1f).graphicsLayer { scaleX = scale; scaleY = scale },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(48.dp)
-                                    .graphicsLayer { scaleX = scale; scaleY = scale }
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (selected)
-                                            Brush.radialGradient(listOf(color, ColorBallEdge))
-                                        else
-                                            Brush.radialGradient(listOf(color.copy(alpha = 0.45f), Color.Transparent))
+                                    .height(40.dp)
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Brush.horizontalGradient(listOf(t.btnPrimary1, t.btnPrimary2)))
+                                    .then(
+                                        if (selected) Modifier.drawBehind {
+                                            drawRoundRect(Color.White.copy(alpha = 0.35f), style = Stroke(2f * density), cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx()))
+                                        } else Modifier
                                     )
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication        = null
-                                    ) { viewModel.setBallColorIdx(idx) },
+                                    .clickable(remember { MutableInteractionSource() }, null) { viewModel.setTheme(t.id) },
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (selected) {
-                                    Text("✓", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Black)
+                                    Canvas(Modifier.size(14.dp)) {
+                                        val path = Path().apply {
+                                            moveTo(0f, size.height * 0.5f)
+                                            lineTo(size.width * 0.38f, size.height)
+                                            lineTo(size.width, 0f)
+                                        }
+                                        drawPath(path, Color.White, style = Stroke(width = 2.4f * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                                    }
                                 }
                             }
-                            Text(
-                                text       = label,
-                                color      = if (selected) color else ColorAccent,
-                                fontSize   = labelFs,
-                                fontFamily = FontFamily.Default,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                            )
+                            Text(t.id.label, color = if (selected) theme.score else theme.accent, fontSize = labelFs, fontFamily = FontFamily.Default, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
                 }
 
-                SectionLabel("DIFFICULTY", labelFs)
+                // ─ Audio ─────────────────────────────────────────────────────
+                SettingSection("AUDIO", labelFs, theme)
+                SettingsToggleRow("Sound Effects", soundEffects, { viewModel.toggleSoundEffects() }, bodyFs, theme)
+                SettingsToggleRow("Music",         music,        { viewModel.toggleMusic()        }, bodyFs, theme)
+                SettingsToggleRow("Vibration",     vibration,    { viewModel.toggleVibration()    }, bodyFs, theme)
 
+                // ─ Ball color ─────────────────────────────────────────────────
+                SettingSection("BALL COLOR", labelFs, theme)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    BallColorOptions.forEachIndexed { idx, (color, label) ->
+                        val selected = idx == ballColorIdx
+                        val scale by animateFloatAsState(if (selected) 1.12f else 1f, spring(Spring.DampingRatioMediumBouncy), label = "cs_$idx")
+                        Column(
+                            modifier            = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .graphicsLayer { scaleX = scale; scaleY = scale }
+                                    .clip(CircleShape)
+                                    .background(if (selected) Brush.radialGradient(listOf(color, theme.ballEdge)) else Brush.radialGradient(listOf(color.copy(alpha = 0.42f), Color.Transparent)))
+                                    .clickable(remember { MutableInteractionSource() }, null) { viewModel.setBallColorIdx(idx) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (selected) {
+                                    Canvas(Modifier.size(14.dp)) {
+                                        val p = Path().apply { moveTo(0f, size.height * 0.5f); lineTo(size.width * 0.38f, size.height); lineTo(size.width, 0f) }
+                                        drawPath(p, Color.White, style = Stroke(2.2f * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                                    }
+                                }
+                            }
+                            Text(label, color = if (selected) color else theme.accent, fontSize = labelFs, fontFamily = FontFamily.Default, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+
+                // ─ Difficulty ────────────────────────────────────────────────
+                SettingSection("DIFFICULTY", labelFs, theme)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1A1030))
+                        .background(theme.surfaceCard)
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -179,43 +210,25 @@ fun SettingsScreen(
                         val selected = diff == difficulty
                         Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp)
+                                .weight(1f).height(40.dp)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (selected)
-                                        Brush.horizontalGradient(listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9)))
-                                    else
-                                        Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent))
-                                )
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication        = null
-                                ) { viewModel.setDifficulty(diff) },
+                                .background(if (selected) Brush.horizontalGradient(listOf(theme.btnPrimary1, theme.btnPrimary2)) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)))
+                                .clickable(remember { MutableInteractionSource() }, null) { viewModel.setDifficulty(diff) },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text       = diff.label,
-                                color      = if (selected) Color.White else ColorAccent,
-                                fontSize   = bodyFs,
-                                fontFamily = FontFamily.Default,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                            )
+                            Text(diff.label, color = if (selected) (if (theme.isLight) Color.White else Color.White) else theme.accent, fontSize = bodyFs, fontFamily = FontFamily.Default, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
                 }
 
-                SectionLabel("STATISTICS", labelFs)
-
-                // Best score card
+                // ─ Stats ─────────────────────────────────────────────────────
+                SettingSection("STATISTICS", labelFs, theme)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(
-                            Brush.verticalGradient(listOf(Color(0xFF1E1040), Color(0xFF120A20)))
-                        )
-                        .padding(horizontal = 22.dp, vertical = 20.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Brush.verticalGradient(listOf(theme.surfaceCard, theme.background)))
+                        .padding(horizontal = 20.dp, vertical = 18.dp)
                 ) {
                     Row(
                         modifier              = Modifier.fillMaxWidth(),
@@ -223,22 +236,16 @@ fun SettingsScreen(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text(
-                                text          = "PERSONAL BEST",
-                                color         = ColorAccent,
-                                fontSize      = labelFs,
-                                fontFamily    = FontFamily.Default,
-                                letterSpacing = 2.sp
-                            )
-                            Text(
-                                text       = bestScore.toString(),
-                                color      = ColorScore,
-                                fontSize   = (headerFs.value * 1.7f).sp,
-                                fontFamily = FontFamily.Default,
-                                fontWeight = FontWeight.Black
-                            )
+                            Text("PERSONAL BEST", color = theme.accent, fontSize = labelFs, fontFamily = FontFamily.Default, letterSpacing = 2.sp)
+                            Text(bestScore.toString(), color = theme.score, fontSize = responsiveSp(sw, 0.11f, 34f, 46f), fontFamily = FontFamily.Default, fontWeight = FontWeight.Black)
                         }
-                        Text("🏆", fontSize = 36.sp)
+                        // Trophy icon via Canvas
+                        Canvas(Modifier.size(38.dp)) {
+                            val cx = size.width / 2f; val cy = size.height / 2f
+                            // Simple star as trophy proxy
+                            val path = starPath(cx, cy * 0.9f, size.minDimension * 0.42f, size.minDimension * 0.20f, 5)
+                            drawPath(path, theme.star.copy(alpha = 0.8f))
+                        }
                     }
                 }
 
@@ -249,55 +256,48 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SectionLabel(text: String, fontSize: androidx.compose.ui.unit.TextUnit) {
-    Text(
-        text          = text,
-        color         = ColorAccent,
-        fontSize      = fontSize,
-        fontFamily    = FontFamily.Default,
-        fontWeight    = FontWeight.Bold,
-        letterSpacing = 3.sp
-    )
+private fun SettingSection(label: String, fs: TextUnit, theme: VoidFallTheme) {
+    Text(label, color = theme.accent, fontSize = fs, fontFamily = FontFamily.Default, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
 }
 
 @Composable
-private fun SettingsToggleRow(
-    label: String,
-    checked: Boolean,
-    onToggle: () -> Unit,
-    bodyFs: androidx.compose.ui.unit.TextUnit
-) {
+private fun SettingsToggleRow(label: String, checked: Boolean, onToggle: () -> Unit, fs: TextUnit, theme: VoidFallTheme) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF1A1030))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication        = null,
-                onClick           = onToggle
-            )
-            .padding(horizontal = 18.dp, vertical = 14.dp),
+            .background(theme.surfaceCard)
+            .clickable(remember { MutableInteractionSource() }, null, onClick = onToggle)
+            .padding(horizontal = 18.dp, vertical = 13.dp),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(
-            text       = label,
-            color      = ColorScore,
-            fontSize   = bodyFs,
-            fontFamily = FontFamily.Default,
-            fontWeight = FontWeight.Medium
-        )
+        Text(label, color = theme.score, fontSize = fs, fontFamily = FontFamily.Default, fontWeight = FontWeight.Medium)
         Switch(
             checked         = checked,
             onCheckedChange = { onToggle() },
             colors          = SwitchDefaults.colors(
                 checkedThumbColor    = Color.White,
-                checkedTrackColor    = Color(0xFF7C3AED),
-                uncheckedThumbColor  = ColorAccent,
-                uncheckedTrackColor  = Color(0xFF2A1850),
-                uncheckedBorderColor = Color(0xFF3D2F5E)
+                checkedTrackColor    = theme.btnPrimary2,
+                uncheckedThumbColor  = theme.accent,
+                uncheckedTrackColor  = theme.background,
+                uncheckedBorderColor = theme.accent.copy(alpha = 0.5f)
             )
         )
     }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+private fun responsiveSp(sw: Dp, frac: Float, min: Float, max: Float): TextUnit = (sw.value * frac).coerceIn(min, max).sp
+private fun responsiveDp(sw: Dp, frac: Float, min: Float, max: Float): Float    = (sw.value * frac).coerceIn(min, max)
+
+private fun starPath(cx: Float, cy: Float, outerR: Float, innerR: Float, pts: Int): Path {
+    val path = Path(); val step = Math.PI.toFloat() / pts
+    for (i in 0 until pts * 2) {
+        val a = i * step - Math.PI.toFloat() / 2f
+        val r = if (i % 2 == 0) outerR else innerR
+        if (i == 0) path.moveTo(cx + r * kotlin.math.cos(a), cy + r * kotlin.math.sin(a))
+        else        path.lineTo(cx + r * kotlin.math.cos(a), cy + r * kotlin.math.sin(a))
+    }
+    path.close(); return path
 }

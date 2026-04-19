@@ -1,9 +1,10 @@
 package uz.angrykitten.shiftball
 
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,9 +28,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.isActive
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 @Composable
 fun GameScreen(
@@ -39,385 +37,340 @@ fun GameScreen(
 ) {
     val state   by viewModel.state.collectAsStateWithLifecycle()
     val density = LocalDensity.current
+    val theme   = LocalVoidFallTheme.current
 
-    // Fix race condition: only set dims+startGame once when real size is known
-    var dimsSet by remember { mutableStateOf(false) }
-
+    // Dimensions → startGame once when IDLE
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val wDp = maxWidth
-        val hDp = maxHeight
+        val wDp = maxWidth; val hDp = maxHeight
         LaunchedEffect(wDp, hDp) {
             val wVal = with(density) { wDp.toPx() / density.density }
             val hVal = with(density) { hDp.toPx() / density.density }
             if (wVal > 0f && hVal > 0f) {
                 viewModel.screenWidthDp  = wVal
                 viewModel.screenHeightDp = hVal
-                if (!dimsSet) {
-                    dimsSet = true
-                    viewModel.startGame()
-                }
+                if (state.status == GameStatus.IDLE) viewModel.startGame()
             }
         }
     }
 
-    // Game loop — only ticks when RUNNING
+    // Frame loop
     LaunchedEffect(Unit) {
-        var lastNanos = -1L
+        var last = -1L
         while (isActive) {
-            withFrameNanos { nanos ->
-                if (lastNanos < 0L) { lastNanos = nanos }
-                val dt = ((nanos - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
-                lastNanos = nanos
-                viewModel.tick(dt)
+            withFrameNanos { ns ->
+                if (last < 0L) last = ns
+                val dt = ((ns - last) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                last = ns; viewModel.tick(dt)
             }
         }
     }
 
-    // Navigate to game-over when status transitions to OVER
+    // Navigate on OVER
     var navigatedOver by remember { mutableStateOf(false) }
     LaunchedEffect(state.status) {
         if (state.status == GameStatus.OVER && !navigatedOver) {
-            navigatedOver = true
-            onGameOver(state.score, state.gemsCollected)
+            navigatedOver = true; onGameOver(state.score, state.gemsCollected)
         }
     }
 
-    // Shake
     val shakeX = if (state.screenShake > 0f)
-        (sin(System.currentTimeMillis() * 0.055) * state.screenShake).toFloat()
+        (kotlin.math.sin(System.currentTimeMillis() * 0.055) * state.screenShake).toFloat()
     else 0f
 
-    // Tap anywhere (except pause zone) to switch sides
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(ColorBackground)
+            .background(theme.background)
             .offset(x = shakeX.dp)
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    // Top-right 56x56dp area → pause
-                    val pxLimit = 64 * density.density
-                    if (offset.x > size.width - pxLimit && offset.y < pxLimit) {
-                        viewModel.togglePause()
-                    } else {
-                        viewModel.onTap()
-                    }
-                }
-            }
     ) {
-        val d = density.density
+        // ── Game canvas (tap → switch sides) ─────────────────────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) { detectTapGestures { viewModel.onTap() } }
+        ) {
+            val d = density.density
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w     = size.width; val h = size.height
+                val wallW = WALL_WIDTH_DP * d
+                drawGameBackground(theme, w, h)
+                drawGameWalls(theme, w, h, wallW)
+                state.platforms.forEach { drawGamePlatform(theme, it, wallW, w, d) }
+                state.gems.forEach      { drawGameGem(theme, it, d) }
 
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w    = size.width
-            val h    = size.height
-            val wallW = WALL_WIDTH_DP * d
-
-            drawGameBackground(w, h)
-            drawGameWalls(w, h, wallW)
-
-            // Platforms
-            state.platforms.forEach { platform ->
-                drawGamePlatform(platform, wallW, w, d)
-            }
-
-            // Gems
-            state.gems.forEach { gem ->
-                drawGameGem(gem, d)
-            }
-
-            // Ring/dash trail + burst particles
-            state.particles.forEach { particle ->
-                val a = particle.alpha.coerceIn(0f, 1f)
-                if (particle.isBurst) {
-                    // Small glowing dot burst
-                    drawCircle(
-                        color  = particle.color.copy(alpha = a),
-                        radius = particle.radius * d,
-                        center = Offset(particle.x * d, particle.y * d)
-                    )
-                } else {
-                    // Ring trail — hollow circle outline
-                    drawCircle(
-                        color  = particle.color.copy(alpha = a * 0.55f),
-                        radius = particle.radius * d,
-                        center = Offset(particle.x * d, particle.y * d),
-                        style  = Stroke(width = 1.8f * d)
-                    )
+                state.particles.forEach { p ->
+                    val a = p.alpha.coerceIn(0f, 1f)
+                    if (p.isBurst) drawCircle(p.color.copy(alpha = a), p.radius * d, Offset(p.x * d, p.y * d))
+                    else drawCircle(p.color.copy(alpha = a * 0.5f), p.radius * d, Offset(p.x * d, p.y * d), style = Stroke(1.6f * d))
                 }
+
+                val ball = state.ball
+                val bx = ball.x * d; val by = ball.y * d; val br = ball.radius * d
+                drawCircle(Brush.radialGradient(listOf(theme.ballEdge.copy(alpha = 0.3f), Color.Transparent), Offset(bx, by), br * 2.8f), br * 2.8f, Offset(bx, by))
+                drawCircle(Brush.radialGradient(listOf(viewModel.ballColor, theme.ballEdge), Offset(bx - br * 0.2f, by - br * 0.2f), br), br, Offset(bx, by))
+                drawCircle(Color.White.copy(alpha = 0.38f), br * 0.28f, Offset(bx - br * 0.28f, by - br * 0.28f))
             }
 
-            // Ball
-            val ball = state.ball
-            val bx   = ball.x * d
-            val by   = ball.y * d
-            val br   = ball.radius * d
+            // HUD
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val sw      = maxWidth
+                val scoreFs = (sw.value * 0.11f).coerceIn(34f, 50f).sp
+                val labelFs = (sw.value * 0.030f).coerceIn(10f, 13f).sp
 
-            // Outer ambient glow
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(ColorBallEdge.copy(alpha = 0.35f), Color.Transparent),
-                    center = Offset(bx, by),
-                    radius = br * 2.6f
-                ),
-                radius = br * 2.6f,
-                center = Offset(bx, by)
-            )
-            // Body
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(viewModel.ballColor, ColorBallEdge),
-                    center = Offset(bx - br * 0.2f, by - br * 0.2f),
-                    radius = br
-                ),
-                radius = br,
-                center = Offset(bx, by)
-            )
-            // Specular
-            drawCircle(
-                color  = Color.White.copy(alpha = 0.38f),
-                radius = br * 0.28f,
-                center = Offset(bx - br * 0.28f, by - br * 0.28f)
-            )
-        }
-
-        // ─ HUD ────────────────────────────────────────────────────────────
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val screenW = maxWidth
-            val scoreFs = (screenW.value * 0.115f).coerceIn(36f, 52f).sp
-            val labelFs = (screenW.value * 0.032f).coerceIn(10f, 14f).sp
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .systemBarsPadding()
-                    .padding(top = 24.dp)
-                    .align(Alignment.TopCenter),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text          = "SCORE",
-                    color         = Color(0xFFC09CF8).copy(alpha = 0.7f),
-                    fontSize      = labelFs,
-                    fontFamily    = FontFamily.Default,
-                    fontWeight    = FontWeight.SemiBold,
-                    letterSpacing = 4.sp
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text       = state.score.toString(),
-                    color      = Color.White,
-                    fontSize   = scoreFs,
-                    fontFamily = FontFamily.Default,
-                    fontWeight = FontWeight.Black
-                )
-                if (state.gemsCollected > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("◆", color = ColorGem, fontSize = labelFs)
-                        Spacer(Modifier.width(4.dp))
+                Column(
+                    modifier            = Modifier.fillMaxWidth().systemBarsPadding().padding(top = 22.dp).align(Alignment.TopCenter),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("SCORE", color = theme.score.copy(alpha = 0.55f), fontSize = labelFs, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, letterSpacing = 4.sp)
+                    Spacer(Modifier.height(2.dp))
+                    Text(state.score.toString(), color = theme.score, fontSize = scoreFs, fontFamily = FontFamily.Default, fontWeight = FontWeight.Black)
+                    if (state.gemsCollected > 0) {
+                        Spacer(Modifier.height(3.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("◆", color = theme.gem, fontSize = labelFs)
+                            Spacer(Modifier.width(4.dp))
+                            Text("×${state.gemsCollected}", color = theme.score, fontSize = labelFs, fontFamily = FontFamily.Default)
+                        }
+                    }
+                    if (state.gemCombo >= 2) {
+                        Spacer(Modifier.height(3.dp))
                         Text(
-                            text      = "×${state.gemsCollected}",
-                            color     = Color(0xFFE8D5FF),
-                            fontSize  = labelFs,
-                            fontFamily = FontFamily.Default
+                            text = "COMBO ×${when { state.gemCombo >= 6 -> 4; state.gemCombo >= 4 -> 3; else -> 2 }}!",
+                            color = theme.gem.copy(alpha = 0.9f), fontSize = labelFs, fontFamily = FontFamily.Default,
+                            fontWeight = FontWeight.Bold, letterSpacing = 2.sp
                         )
                     }
                 }
-                // Combo display
-                if (state.gemCombo >= 2) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text      = "COMBO ×${
-                            when {
-                                state.gemCombo >= 6 -> 4
-                                state.gemCombo >= 4 -> 3
-                                else                -> 2
-                            }
-                        }!",
-                        color     = ColorGem.copy(alpha = 0.9f),
-                        fontSize  = labelFs,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Default,
-                        letterSpacing = 2.sp
-                    )
-                }
-            }
-
-            // ─ Pause button (top-right) ───────────────────────────────
-            Box(
-                modifier = Modifier
-                    .systemBarsPadding()
-                    .padding(top = 16.dp, end = 16.dp)
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(Color(0x33FFFFFF))
-                    .align(Alignment.TopEnd)
-                    .drawBehind {
-                        // Pause icon (two bars) or play icon
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text      = if (state.status == GameStatus.PAUSED) "▶" else "⏸",
-                    color     = Color.White.copy(alpha = 0.85f),
-                    fontSize  = 16.sp
-                )
             }
         }
 
-        // ─ Pause overlay ──────────────────────────────────────────────────
+        // ── PAUSE OVERLAY — styled like a loss/break screen ──────────────────
         if (state.status == GameStatus.PAUSED) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xCC0D0D1A)),
+                    .background(theme.overlayBg)
+                    .pointerInput(Unit) { detectTapGestures { viewModel.togglePause() } },
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "PAUSED",
-                        color      = Color.White,
-                        fontSize   = 32.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 6.sp
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Tap to resume",
-                        color      = Color(0xFFE8D5FF).copy(alpha = 0.6f),
-                        fontSize   = 14.sp
-                    )
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val sw  = maxWidth
+                    val cardW = (sw.value * 0.84f).coerceIn(260f, 360f).dp
+
+                    // Pause card (just like game-over card)
+                    Box(
+                        modifier = Modifier
+                            .width(cardW)
+                            .align(Alignment.Center)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(theme.surfaceCard)
+                            .drawBehind {
+                                val s = 1f * density.density
+                                drawRoundRect(
+                                    color        = theme.btnPrimary1.copy(alpha = 0.3f),
+                                    topLeft      = Offset(s, s),
+                                    size         = androidx.compose.ui.geometry.Size(size.width - s * 2f, size.height - s * 2f),
+                                    cornerRadius = CornerRadius(24.dp.toPx()),
+                                    style        = Stroke(s)
+                                )
+                            }
+                    ) {
+                        Column(
+                            modifier            = Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(0.dp)
+                        ) {
+                            // Pause icon
+                            Canvas(modifier = Modifier.size(28.dp)) {
+                                val bw   = this.size.width * 0.26f
+                                val gap  = this.size.width * 0.2f
+                                val left = (this.size.width - bw * 2 - gap) / 2f
+                                drawRect(theme.score.copy(alpha = 0.8f), Offset(left, 0f), Size(bw, this.size.height))
+                                drawRect(theme.score.copy(alpha = 0.8f), Offset(left + bw + gap, 0f), Size(bw, this.size.height))
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text          = "PAUSED",
+                                color         = theme.score,
+                                fontSize      = (sw.value * 0.07f).coerceIn(22f, 30f).sp,
+                                fontFamily    = FontFamily.Default,
+                                fontWeight    = FontWeight.Black,
+                                letterSpacing = 4.sp
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text       = "tap anywhere to resume",
+                                color      = theme.accent,
+                                fontSize   = 11.sp,
+                                fontFamily = FontFamily.Default
+                            )
+
+                            Spacer(Modifier.height(22.dp))
+
+                            // Divider
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(theme.divider))
+
+                            Spacer(Modifier.height(18.dp))
+
+                            // Score + Best row
+                            Row(
+                                modifier              = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                StatColumn("SCORE", state.score.toString(), theme, sw)
+                                // Vertical divider
+                                Box(Modifier.width(1.dp).height(48.dp).background(theme.divider))
+                                StatColumn("BEST", state.bestScore.toString(), theme, sw)
+                            }
+
+                            if (state.gemsCollected > 0) {
+                                Spacer(Modifier.height(10.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("◆", color = theme.gem, fontSize = 12.sp)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("${state.gemsCollected} gems", color = theme.accent, fontSize = 12.sp, fontFamily = FontFamily.Default)
+                                }
+                            }
+
+                            Spacer(Modifier.height(22.dp))
+
+                            // Resume button
+                            PauseActionButton(
+                                text    = "RESUME",
+                                filled  = true,
+                                theme   = theme
+                            ) { viewModel.togglePause() }
+
+                            Spacer(Modifier.height(10.dp))
+
+                            // Main menu button
+                            PauseActionButton(
+                                text    = "MAIN MENU",
+                                filled  = false,
+                                theme   = theme
+                            ) { viewModel.resetGame(); onMenu() }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Pause/Resume button — always Z-top ───────────────────────────────
+        Box(
+            modifier = Modifier
+                .systemBarsPadding()
+                .padding(top = 12.dp, end = 14.dp)
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(
+                    if (theme.isLight) theme.surfaceCard.copy(alpha = 0.85f)
+                    else Color.White.copy(alpha = 0.10f)
+                )
+                .clickable(remember { MutableInteractionSource() }, null) { viewModel.togglePause() }
+                .align(Alignment.TopEnd),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(16.dp)) {
+                val isPaused = state.status == GameStatus.PAUSED
+                val c = theme.score.copy(alpha = 0.85f)
+                if (isPaused) {
+                    val path = Path().apply {
+                        moveTo(this@Canvas.size.width * 0.18f, 0f)
+                        lineTo(this@Canvas.size.width, this@Canvas.size.height * 0.5f)
+                        lineTo(this@Canvas.size.width * 0.18f, this@Canvas.size.height)
+                        close()
+                    }
+                    drawPath(path, c)
+                } else {
+                    val bw   = this.size.width * 0.27f
+                    val gap  = this.size.width * 0.18f
+                    val left = (this.size.width - bw * 2 - gap) / 2f
+                    drawRect(c, Offset(left, 0f), Size(bw, this.size.height))
+                    drawRect(c, Offset(left + bw + gap, 0f), Size(bw, this.size.height))
                 }
             }
         }
     }
 }
 
+@Composable
+private fun StatColumn(label: String, value: String, theme: VoidFallTheme, sw: androidx.compose.ui.unit.Dp) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = theme.accent, fontSize = (sw.value * 0.025f).coerceIn(8f, 11f).sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = theme.score, fontSize = (sw.value * 0.085f).coerceIn(26f, 36f).sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.Black)
+    }
+}
+
+@Composable
+private fun PauseActionButton(text: String, filled: Boolean, theme: VoidFallTheme, onClick: () -> Unit) {
+    val bg = if (filled) Brush.horizontalGradient(listOf(theme.btnPrimary1, theme.btnPrimary2))
+             else Brush.horizontalGradient(listOf(theme.btnPrimary1.copy(alpha = 0.08f), theme.btnPrimary2.copy(alpha = 0.08f)))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .clickable(remember { MutableInteractionSource() }, null, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        // Outline for secondary button drawn via Canvas
+        if (!filled) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRoundRect(
+                    color        = theme.btnOutline.copy(alpha = 0.4f),
+                    topLeft      = Offset(1f, 1f),
+                    size         = Size(size.width - 2f, size.height - 2f),
+                    cornerRadius = CornerRadius(14.dp.toPx()),
+                    style        = Stroke(1f)
+                )
+            }
+        }
+        Text(text, color = if (filled) Color.White else theme.score.copy(alpha = 0.8f), fontSize = 13.sp, fontFamily = FontFamily.Default, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+    }
+}
+
 // ── Canvas helpers ────────────────────────────────────────────────────────────
-
-private fun DrawScope.drawGameBackground(w: Float, h: Float) {
-    drawRect(ColorBackground, size = Size(w, h))
-    // Subtle vignette
-    drawRect(
-        brush = Brush.radialGradient(
-            colors = listOf(Color.Transparent, Color(0x55000000)),
-            center = Offset(w / 2f, h / 2f),
-            radius = w * 1.0f
-        ),
-        size = Size(w, h)
-    )
-}
-
-private fun DrawScope.drawGameWalls(w: Float, h: Float, wallW: Float) {
-    val wallBrush = Brush.verticalGradient(
-        colors = listOf(ColorWallTop, ColorWallMid, ColorWallBottom),
-        startY = 0f, endY = h
-    )
-    // Left wall
-    drawRect(brush = wallBrush, topLeft = Offset(0f, 0f), size = Size(wallW, h))
-    // Left inner glow
-    drawRect(
-        brush = Brush.horizontalGradient(
-            colors = listOf(ColorWallBottom.copy(alpha = 0.3f), Color.Transparent),
-            startX = wallW, endX = wallW + 24f
-        ),
-        topLeft = Offset(wallW, 0f), size = Size(24f, h)
-    )
-    // Right wall
-    drawRect(brush = wallBrush, topLeft = Offset(w - wallW, 0f), size = Size(wallW, h))
-    // Right inner glow
-    drawRect(
-        brush = Brush.horizontalGradient(
-            colors = listOf(Color.Transparent, ColorWallBottom.copy(alpha = 0.3f)),
-            startX = w - wallW - 24f, endX = w - wallW
-        ),
-        topLeft = Offset(w - wallW - 24f, 0f), size = Size(24f, h)
-    )
-}
-
-private fun DrawScope.drawGamePlatform(
-    platform: Platform,
-    wallW: Float,
-    w: Float,
-    density: Float
-) {
-    val pH   = platform.height * density
-    val pL   = platform.length * density
-    val pY   = platform.y * density
-    val left = if (platform.side == PlatformSide.LEFT) wallW else w - wallW - pL
-
-    // Under-glow
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(ColorPlatformStart.copy(alpha = 0.22f), Color.Transparent),
-            startY = pY + pH, endY = pY + pH + 18f
-        ),
-        topLeft      = Offset(left, pY + pH),
-        size         = Size(pL, 18f),
-        cornerRadius = CornerRadius(6f)
-    )
-    // Body
-    drawRoundRect(
-        brush = Brush.horizontalGradient(
-            colors = if (platform.side == PlatformSide.LEFT)
-                listOf(ColorPlatformStart, ColorPlatformEnd)
-            else
-                listOf(ColorPlatformEnd, ColorPlatformStart),
-            startX = left, endX = left + pL
-        ),
-        topLeft      = Offset(left, pY),
-        size         = Size(pL, pH),
-        cornerRadius = CornerRadius(8f)
-    )
-    // Top shine
-    drawRoundRect(
-        color        = Color.White.copy(alpha = 0.15f),
-        topLeft      = Offset(left + 4f, pY + 2f),
-        size         = Size(pL - 8f, pH * 0.38f),
-        cornerRadius = CornerRadius(5f)
-    )
-}
-
-private fun DrawScope.drawGameGem(gem: Gem, density: Float) {
-    val cx = gem.x * density
-    val cy = gem.y * density
-    val s  = gem.size * density
-
-    // Outer glow
-    drawCircle(
-        color  = ColorGem.copy(alpha = 0.22f),
-        radius = s * 1.8f,
-        center = Offset(cx, cy)
-    )
-    // Ring glow
-    drawCircle(
-        color  = ColorGem.copy(alpha = 0.35f),
-        radius = s * 1.1f,
-        center = Offset(cx, cy),
-        style  = Stroke(width = 1.5f * density)
-    )
-    // Diamond path
-    val path = Path().apply {
-        moveTo(cx,             cy - s)
-        lineTo(cx + s * 0.6f, cy)
-        lineTo(cx,             cy + s)
-        lineTo(cx - s * 0.6f, cy)
-        close()
-    }
-    drawPath(
-        path  = path,
-        brush = Brush.verticalGradient(
-            colors = listOf(Color(0xFFFFE066), ColorGem),
-            startY = cy - s, endY = cy + s
+private fun DrawScope.drawGameBackground(theme: VoidFallTheme, w: Float, h: Float) {
+    drawRect(theme.background, size = Size(w, h))
+    if (!theme.isLight) {
+        drawRect(
+            brush = Brush.radialGradient(listOf(Color.Transparent, Color(0x55000000)), Offset(w / 2f, h / 2f), w),
+            size  = Size(w, h)
         )
-    )
-    // Inner highlight
-    val inner = Path().apply {
-        moveTo(cx, cy - s * 0.45f)
-        lineTo(cx + s * 0.28f, cy)
-        lineTo(cx, cy + s * 0.28f)
-        lineTo(cx - s * 0.28f, cy)
-        close()
     }
-    drawPath(inner, color = Color.White.copy(alpha = 0.28f))
+}
+
+private fun DrawScope.drawGameWalls(theme: VoidFallTheme, w: Float, h: Float, wallW: Float) {
+    val brush = Brush.verticalGradient(listOf(theme.wallTop, theme.wallMid, theme.wallBottom), 0f, h)
+    drawRect(brush, Offset(0f, 0f), Size(wallW, h))
+    drawRect(Brush.horizontalGradient(listOf(theme.wallBottom.copy(alpha = 0.28f), Color.Transparent), wallW, wallW + 22f), Offset(wallW, 0f), Size(22f, h))
+    drawRect(brush, Offset(w - wallW, 0f), Size(wallW, h))
+    drawRect(Brush.horizontalGradient(listOf(Color.Transparent, theme.wallBottom.copy(alpha = 0.28f)), w - wallW - 22f, w - wallW), Offset(w - wallW - 22f, 0f), Size(22f, h))
+}
+
+private fun DrawScope.drawGamePlatform(theme: VoidFallTheme, p: Platform, wallW: Float, w: Float, d: Float) {
+    val pH  = p.height * d; val pL = p.length * d; val pY = p.y * d
+    val left = if (p.side == PlatformSide.LEFT) wallW else w - wallW - pL
+    drawRoundRect(
+        brush = Brush.verticalGradient(listOf(theme.platformStart.copy(alpha = 0.2f), Color.Transparent), pY + pH, pY + pH + 16f),
+        topLeft = Offset(left, pY + pH), size = Size(pL, 16f), cornerRadius = CornerRadius(5f)
+    )
+    drawRoundRect(
+        brush = Brush.horizontalGradient(
+            if (p.side == PlatformSide.LEFT) listOf(theme.platformStart, theme.platformEnd) else listOf(theme.platformEnd, theme.platformStart), left, left + pL
+        ), topLeft = Offset(left, pY), size = Size(pL, pH), cornerRadius = CornerRadius(8f)
+    )
+    drawRoundRect(Color.White.copy(alpha = 0.14f), Offset(left + 4f, pY + 2f), Size(pL - 8f, pH * 0.36f), CornerRadius(5f))
+}
+
+private fun DrawScope.drawGameGem(theme: VoidFallTheme, gem: Gem, d: Float) {
+    val cx = gem.x * d; val cy = gem.y * d; val s = gem.size * d
+    drawCircle(theme.gem.copy(alpha = 0.2f), s * 1.9f, Offset(cx, cy))
+    drawCircle(theme.gem.copy(alpha = 0.3f), s * 1.1f, Offset(cx, cy), style = Stroke(1.4f * d))
+    val path = Path().apply { moveTo(cx, cy - s); lineTo(cx + s * 0.6f, cy); lineTo(cx, cy + s); lineTo(cx - s * 0.6f, cy); close() }
+    drawPath(path, Brush.verticalGradient(listOf(Color(0xFFFFE066), theme.gem), cy - s, cy + s))
+    val inner = Path().apply { moveTo(cx, cy - s * 0.44f); lineTo(cx + s * 0.27f, cy); lineTo(cx, cy + s * 0.27f); lineTo(cx - s * 0.27f, cy); close() }
+    drawPath(inner, Color.White.copy(alpha = 0.26f))
 }
