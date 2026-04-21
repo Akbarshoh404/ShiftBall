@@ -14,6 +14,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import uz.angrykitten.shiftball.ui.theme.ShiftBallTheme
@@ -28,6 +29,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onPause()  { super.onPause();  MusicManager.pause()  }
+    override fun onResume() { super.onResume(); MusicManager.resume() }
+    override fun onDestroy() { super.onDestroy(); MusicManager.stop() }
 }
 
 @SuppressLint("StateFlowValueCalledInComposition")
@@ -40,6 +45,26 @@ fun VoidFallApp() {
     // Collect current theme and provide it to the entire composition tree
     val themeEnum by settingsViewModel.theme.collectAsStateWithLifecycle()
     val currentTheme = themeByEnum(themeEnum)
+
+    // Drive music from the current back-stack destination
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val musicOn by settingsViewModel.music.collectAsStateWithLifecycle()
+
+    LaunchedEffect(currentRoute, musicOn) {
+        MusicManager.setMusicEnabled(musicOn)
+        if (musicOn) {
+            when {
+                currentRoute == null        -> Unit
+                currentRoute == "menu"      -> MusicManager.play(context, MusicManager.Track.MENU)
+                currentRoute == "splash"    -> MusicManager.play(context, MusicManager.Track.MENU)
+                currentRoute == "game"      -> MusicManager.play(context, MusicManager.Track.GAME)
+                currentRoute == "settings"  -> Unit // keep current music playing
+                currentRoute.startsWith("gameover") -> MusicManager.play(context, MusicManager.Track.LOST)
+            }
+        }
+    }
 
     CompositionLocalProvider(LocalVoidFallTheme provides currentTheme) {
         Surface(

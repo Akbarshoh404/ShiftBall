@@ -94,12 +94,13 @@ fun SettingsScreen(
                             val tipX  = size.width * 0.12f
                             val endX  = size.width * 0.88f
                             val headH = size.height * 0.38f
+                            val arrowColor = theme.score
                             // Shaft
-                            drawLine(Color.White, Offset(tipX, midY), Offset(endX, midY), strokeWidth = sw2, cap = StrokeCap.Round)
+                            drawLine(arrowColor, Offset(tipX, midY), Offset(endX, midY), strokeWidth = sw2, cap = StrokeCap.Round)
                             // Arrow head top
-                            drawLine(Color.White, Offset(tipX, midY), Offset(tipX + headH, midY - headH), strokeWidth = sw2, cap = StrokeCap.Round)
+                            drawLine(arrowColor, Offset(tipX, midY), Offset(tipX + headH, midY - headH), strokeWidth = sw2, cap = StrokeCap.Round)
                             // Arrow head bottom
-                            drawLine(Color.White, Offset(tipX, midY), Offset(tipX + headH, midY + headH), strokeWidth = sw2, cap = StrokeCap.Round)
+                            drawLine(arrowColor, Offset(tipX, midY), Offset(tipX + headH, midY + headH), strokeWidth = sw2, cap = StrokeCap.Round)
                         }
                     }
                     Spacer(Modifier.width(14.dp))
