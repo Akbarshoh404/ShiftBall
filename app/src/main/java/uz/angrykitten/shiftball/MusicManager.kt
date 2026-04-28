@@ -4,30 +4,37 @@ import android.content.Context
 import android.media.MediaPlayer
 
 /**
- * Manages background music across screens.
- * Only one track plays at a time; seamlessly swaps when the screen changes.
+ * Manages all background music across screens.
+ * A single soundEnabled flag (driven by the "Sound Effects" toggle) controls everything.
+ * Only one looping background track plays at a time; one-shot stings are on separate players.
  */
 object MusicManager {
 
     enum class Track { MENU, GAME, LOST, NONE }
 
-    private var player: MediaPlayer? = null
+    private var bgPlayer: MediaPlayer? = null
     private var currentTrack: Track = Track.NONE
-    private var musicEnabled: Boolean = true
+    private var soundEnabled: Boolean = true
 
-    fun setMusicEnabled(enabled: Boolean) {
-        musicEnabled = enabled
-        if (!enabled) stop()
-        else if (currentTrack != Track.NONE) { /* caller must re-play */ }
+    fun setSoundEnabled(enabled: Boolean) {
+        soundEnabled = enabled
+        if (!enabled) stopBg()
+        else {
+            // If a track was already set, restart it
+            bgPlayer?.takeIf { !it.isPlaying }?.start()
+        }
     }
 
-    /** Call when navigating to a screen. No-ops if the same track is already playing. */
+    /** Switch background track. No-ops if the same track is already playing. */
     fun play(ctx: Context, track: Track) {
-        if (!musicEnabled) return
-        if (track == currentTrack && player?.isPlaying == true) return
+        if (track == Track.NONE) { stopBg(); return }
+        // Already playing the right track – nothing to do
+        if (track == currentTrack && bgPlayer?.isPlaying == true) return
 
-        stop()
+        stopBg()
         currentTrack = track
+
+        if (!soundEnabled) return          // respect the toggle
 
         val resId = when (track) {
             Track.MENU -> R.raw.menu
@@ -36,28 +43,50 @@ object MusicManager {
             Track.NONE -> return
         }
 
-        player = MediaPlayer.create(ctx, resId)?.apply {
-            isLooping = (track != Track.LOST)
-            setVolume(0.75f, 0.75f)
+        bgPlayer = MediaPlayer.create(ctx, resId)?.apply {
+            isLooping = (track == Track.MENU || track == Track.GAME)
+            setVolume(0.8f, 0.8f)
             start()
         }
     }
 
-    /** Pause without resetting position (e.g. app goes to background). */
+    /**
+     * Play a one-shot level-up jingle without interrupting background music.
+     * Safe to call even if level.wav is absent – it's loaded inside a try/catch.
+     */
+    fun playOneShot(ctx: Context, resId: Int) {
+        if (!soundEnabled) return
+        try {
+            MediaPlayer.create(ctx, resId)?.apply {
+                isLooping = false
+                setVolume(0.9f, 0.9f)
+                setOnCompletionListener { release() }
+                start()
+            }
+        } catch (_: Exception) { /* file missing or decode error – silently skip */ }
+    }
+
+    /** Pause background (e.g. app goes to background). */
     fun pause() {
-        player?.takeIf { it.isPlaying }?.pause()
+        bgPlayer?.takeIf { it.isPlaying }?.pause()
     }
 
-    /** Resume after a pause. */
+    /** Resume background after a pause. */
     fun resume() {
-        if (!musicEnabled) return
-        player?.takeIf { !it.isPlaying }?.start()
+        if (!soundEnabled) return
+        bgPlayer?.takeIf { !it.isPlaying }?.start()
     }
 
-    /** Stop and release current player completely. */
-    fun stop() {
-        player?.apply { if (isPlaying) stop(); release() }
-        player = null
+    /** Stop and release the background player. */
+    fun stopBg() {
+        bgPlayer?.apply {
+            runCatching { if (isPlaying) stop() }
+            runCatching { release() }
+        }
+        bgPlayer = null
         currentTrack = Track.NONE
     }
+
+    /** Alias used by MainActivity lifecycle. */
+    fun stop() = stopBg()
 }

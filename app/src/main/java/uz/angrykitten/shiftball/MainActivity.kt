@@ -50,19 +50,18 @@ fun VoidFallApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-    val musicOn by settingsViewModel.music.collectAsStateWithLifecycle()
+    val soundOn by settingsViewModel.soundEffects.collectAsStateWithLifecycle()
 
-    LaunchedEffect(currentRoute, musicOn) {
-        MusicManager.setMusicEnabled(musicOn)
-        if (musicOn) {
-            when {
-                currentRoute == null        -> Unit
-                currentRoute == "menu"      -> MusicManager.play(context, MusicManager.Track.MENU)
-                currentRoute == "splash"    -> MusicManager.play(context, MusicManager.Track.MENU)
-                currentRoute == "game"      -> MusicManager.play(context, MusicManager.Track.GAME)
-                currentRoute == "settings"  -> Unit // keep current music playing
-                currentRoute.startsWith("gameover") -> MusicManager.play(context, MusicManager.Track.LOST)
-            }
+    LaunchedEffect(currentRoute, soundOn) {
+        MusicManager.setSoundEnabled(soundOn)
+        val route = currentRoute ?: return@LaunchedEffect
+        // Always (re-)play the right track so toggling sound back on restarts music
+        when {
+            route == "menu"              -> MusicManager.play(context, MusicManager.Track.MENU)
+            route == "splash"            -> MusicManager.play(context, MusicManager.Track.MENU)
+            route == "game"              -> MusicManager.play(context, MusicManager.Track.GAME)
+            route == "settings"          -> Unit  // keep whatever is already playing
+            route.startsWith("gameover") -> MusicManager.play(context, MusicManager.Track.LOST)
         }
     }
 

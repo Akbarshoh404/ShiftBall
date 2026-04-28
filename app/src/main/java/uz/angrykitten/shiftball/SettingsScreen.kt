@@ -38,7 +38,6 @@ fun SettingsScreen(
 ) {
     val theme        = LocalVoidFallTheme.current
     val soundEffects by viewModel.soundEffects.collectAsStateWithLifecycle()
-    val music        by viewModel.music.collectAsStateWithLifecycle()
     val vibration    by viewModel.vibration.collectAsStateWithLifecycle()
     val ballColorIdx by viewModel.ballColorIdx.collectAsStateWithLifecycle()
     val difficulty   by viewModel.difficulty.collectAsStateWithLifecycle()
@@ -162,7 +161,6 @@ fun SettingsScreen(
                 // ─ Audio ─────────────────────────────────────────────────────
                 SettingSection("AUDIO", labelFs, theme)
                 SettingsToggleRow("Sound Effects", soundEffects, { viewModel.toggleSoundEffects() }, bodyFs, theme)
-                SettingsToggleRow("Music",         music,        { viewModel.toggleMusic()        }, bodyFs, theme)
                 SettingsToggleRow("Vibration",     vibration,    { viewModel.toggleVibration()    }, bodyFs, theme)
 
                 // ─ Ball color ─────────────────────────────────────────────────

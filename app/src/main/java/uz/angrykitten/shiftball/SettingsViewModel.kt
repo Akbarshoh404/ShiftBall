@@ -14,9 +14,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _soundEffects = MutableStateFlow(true)
     val soundEffects: StateFlow<Boolean> = _soundEffects
 
-    private val _music = MutableStateFlow(true)
-    val music: StateFlow<Boolean> = _music
-
+    // Music is now driven by soundEffects — keeping for DataStore compat but not exposed separately
     private val _vibration = MutableStateFlow(true)
     val vibration: StateFlow<Boolean> = _vibration
 
@@ -36,7 +34,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     init {
         viewModelScope.launch { ds.soundEffects.collect { _soundEffects.value = it } }
-        viewModelScope.launch { ds.music.collect        { _music.value        = it } }
         viewModelScope.launch { ds.vibration.collect    { _vibration.value    = it } }
         viewModelScope.launch { ds.ballColorIdx.collect { _ballColorIdx.value = it } }
         viewModelScope.launch {
@@ -53,7 +50,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleSoundEffects() { toggle(_soundEffects) { ds.saveSoundEffects(it) } }
-    fun toggleMusic()         { toggle(_music)        { ds.saveMusic(it)        } }
     fun toggleVibration()     { toggle(_vibration)    { ds.saveVibration(it)    } }
 
     private fun toggle(state: MutableStateFlow<Boolean>, save: suspend (Boolean) -> Unit) {

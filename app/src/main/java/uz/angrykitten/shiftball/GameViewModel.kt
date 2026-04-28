@@ -16,7 +16,8 @@ import kotlin.random.Random
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val ds = DataStoreManager(application)
+    private val ctx = application.applicationContext
+    private val ds  = DataStoreManager(application)
 
     private val _soundOn      = MutableStateFlow(true)
     private val _vibOn        = MutableStateFlow(true)
@@ -25,7 +26,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _bestScore    = MutableStateFlow(0)
 
     // Track current theme's gem color so tick() can use it without CompositionLocal
-    private var _gemColor     = Color(0xFFFFBF24)
+    private var _gemColor = Color(0xFFFFBF24)
 
     val ballColor: Color get() = BallColorOptions[_ballColorIdx.value].first
     val bestScore: StateFlow<Int> = _bestScore
@@ -36,15 +37,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     var screenWidthDp  = 0f
     var screenHeightDp = 0f
 
+    // ── SoundPool for quick in-game SFX (gem collect) ─────────────────────────
     private var soundPool: SoundPool? = null
-    private var sfxHit     = 0
-    private var sfxGem     = 0
-    private var sfxOver    = 0
+    private var sfxGem      = 0
     private var soundsReady = false
 
     @Suppress("DEPRECATION")
     private val vibrator =
-        application.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        ctx.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
     init {
         viewModelScope.launch { ds.soundEffects.collect { _soundOn.value = it } }
@@ -56,35 +56,48 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch { ds.bestScore.collect { _bestScore.value = it } }
-        initSoundPool(application)
+        initSoundPool()
     }
 
-    private fun initSoundPool(ctx: Context) {
+    private fun initSoundPool() {
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_GAME)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
-        soundPool = SoundPool.Builder().setMaxStreams(4).setAudioAttributes(attrs).build().also { sp ->
-            try {
-                sfxHit  = sp.load(ctx, R.raw.sfx_hit,  1)
-                sfxGem  = sp.load(ctx, R.raw.sfx_gem,  1)
-                sfxOver = sp.load(ctx, R.raw.sfx_over, 1)
-                sp.setOnLoadCompleteListener { _, _, _ -> soundsReady = true }
-            } catch (e: Exception) {
-                soundsReady = false
-            }
-        }
+        try {
+            soundPool = SoundPool.Builder()
+                .setMaxStreams(4)
+                .setAudioAttributes(attrs)
+                .build()
+                .also { sp ->
+                    // Only load the gem sfx – the hit/over WAVs are empty placeholders
+                    // so we use MediaPlayer one-shots for those instead.
+                    sfxGem = sp.load(ctx, R.raw.sfx_gem, 1)
+                    sp.setOnLoadCompleteListener { _, _, status ->
+                        if (status == 0) soundsReady = true
+                    }
+                }
+        } catch (_: Exception) { soundsReady = false }
     }
 
-    private fun playSound(id: Int) {
+    /** Play a SoundPool sample if ready and sound is on. */
+    private fun playPoolSound(id: Int) {
         if (_soundOn.value && soundsReady && id != 0)
             soundPool?.play(id, 1f, 1f, 1, 0, 1f)
+    }
+
+    /** Play a one-shot MediaPlayer sound (for important stings like lost.mp3). */
+    private fun playOneShot(resId: Int) {
+        if (!_soundOn.value) return
+        MusicManager.playOneShot(ctx, resId)
     }
 
     private fun vibrate(ms: Long = 40) {
         if (_vibOn.value)
             vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
     }
+
+    // ── Game logic ────────────────────────────────────────────────────────────
 
     fun startGame() {
         val w    = screenWidthDp
@@ -142,6 +155,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val scroll = st.scrollSpeed * dt
         val movedPlatforms = st.platforms.map { p -> p.copy(y = p.y + scroll) }
 
+        // ── Obstacle collision: die instantly ─────────────────────────────────
         var hitPlatform = false
         val survivedPlatforms = mutableListOf<Platform>()
         for (p in movedPlatforms) {
@@ -154,12 +168,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 hitPlatform = true
             if (p.y < h + p.height + 50f) survivedPlatforms += p
         }
-        if (hitPlatform) { endGame(); return }
+        if (hitPlatform) {
+            // Sound + vibration BEFORE ending so they trigger right away
+            playOneShot(R.raw.lost)   // play lost sting immediately on hit
+            vibrate(120)
+            endGame()
+            return
+        }
 
-        // Gem collision + burst particles
+        // ── Gem collision + burst particles ───────────────────────────────────
         var gemsCollectedThisFrame = 0
         val burstParticles = mutableListOf<Particle>()
-        val color = ballColor
+        val color  = ballColor
         val gemCol = _gemColor
 
         val survivedGems = st.gems.filter { gem ->
@@ -184,14 +204,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             } else true
         }.map { g -> g.copy(y = g.y + scroll) }.filter { g -> g.y - g.size < h + 50f }
 
-        // Combo
+        // ── Combo ─────────────────────────────────────────────────────────────
         var gemCombo   = st.gemCombo
         var comboTimer = st.comboTimer
         if (gemsCollectedThisFrame > 0) { gemCombo += gemsCollectedThisFrame; comboTimer = 2.5f }
         else { comboTimer -= dt; if (comboTimer <= 0f) gemCombo = 0 }
         val comboMult = when { gemCombo >= 6 -> 4; gemCombo >= 4 -> 3; gemCombo >= 2 -> 2; else -> 1 }
 
-        // Ring trail particles
+        // ── Trail particles ───────────────────────────────────────────────────
         val newParticles = buildList {
             addAll(st.particles.map { p ->
                 if (p.isBurst) p.copy(x = p.x + p.vx * dt, y = p.y + p.vy * dt + scroll, alpha = p.alpha - dt * 2.2f, vy = p.vy + 120f * dt)
@@ -203,16 +223,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Score
+        // ── Score ─────────────────────────────────────────────────────────────
         var scoreTimer = st.scoreTimer + dt
         var newScore   = st.score + gemsCollectedThisFrame * 3 * comboMult
         if (scoreTimer >= 0.5f) { newScore += 1; scoreTimer -= 0.5f }
 
-        // Speed
+        // ── Speed ─────────────────────────────────────────────────────────────
         val base     = BASE_SCROLL_SPEED_DP * diff.speedMult
         val newSpeed = (base + (newScore / 8f) * 22f).coerceAtMost(base * 4.5f)
 
-        // Spawn platform
+        // ── Spawn platform ────────────────────────────────────────────────────
         val updatedPlatforms = survivedPlatforms.toMutableList()
         val highestY = updatedPlatforms.minOfOrNull { it.y } ?: 0f
         var newlySpawned: Platform? = null
@@ -226,7 +246,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             updatedPlatforms += newlySpawned
         }
 
-        // Spawn gems
+        // ── Spawn gems ────────────────────────────────────────────────────────
         val updatedGems = survivedGems.toMutableList()
         if (survivedGems.size < 4 && Random.nextFloat() < 0.007f * diff.spawnRate) {
             val gemY = newlySpawned?.y?.plus(PLATFORM_GAP_DP * 0.5f) ?: -60f
@@ -236,9 +256,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             updatedGems += Gem(x = gemX, y = gemY)
         }
 
-        var shake = (st.screenShake - dt * 4f).coerceAtLeast(0f)
-        if (hitPlatform) { shake = 7f; playSound(sfxHit); vibrate(35) }
-        if (gemsCollectedThisFrame > 0) { playSound(sfxGem); vibrate(18) }
+        // ── Gem SFX + vibration ───────────────────────────────────────────────
+        val shake = (st.screenShake - dt * 4f).coerceAtLeast(0f)
+        if (gemsCollectedThisFrame > 0) { playPoolSound(sfxGem); vibrate(18) }
+
+        // ── Level milestone every 10 pts ──────────────────────────────────────
+        val prevLevel = st.score / 10
+        val nextLevel = newScore / 10
+        if (nextLevel > prevLevel && nextLevel > 0) {
+            MusicManager.playOneShot(ctx, R.raw.level)
+            vibrate(55)
+        }
 
         _state.value = st.copy(
             ball          = st.ball.copy(x = newX, y = newY, side = newSide),
@@ -266,9 +294,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun endGame() {
-        val st        = _state.value
-        playSound(sfxOver); vibrate(90)
-        val newBest   = maxOf(st.score, _bestScore.value)
+        val st      = _state.value
+        val newBest = maxOf(st.score, _bestScore.value)
         val isNewBest = st.score > 0 && st.score >= _bestScore.value
         _bestScore.value = newBest
         viewModelScope.launch { ds.saveBestScore(newBest) }
@@ -285,5 +312,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _gemColor           = theme.gem
     }
 
-    override fun onCleared() { soundPool?.release(); soundPool = null; super.onCleared() }
+    override fun onCleared() {
+        soundPool?.release()
+        soundPool = null
+        super.onCleared()
+    }
 }
